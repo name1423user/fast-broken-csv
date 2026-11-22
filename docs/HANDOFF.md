@@ -14,6 +14,8 @@
 - 16 時以降に試して効かなかったもの: DataView をローカル変数に写す（差なし）、readPlain の SWAR 化（差なし、戻した）。
 - 次に試す候補（未着手）: 引用符つきフィールドの読みを readRecord に取り込む（関数呼び出し 9.5 万回とグローバル同期を省く。ただしカンマのその場処理は遅くなったので要計測）、UTF-8 検証（約 2.5ms）を省くかどうかはユーザー判断（JSON.stringify の出力では不正な UTF-8 は起きないが、全入力での一致の保証が外れる）。
 - 計測の道具（scratch、別セッションでは作り直し）: multibench.mjs（複数ボットを交互に Docker 実行して cgroup の CPU 時間の中央値）、variant.py（transducer.js の置換コピー）、mkvar.sh、lineprof.sh。床の構成は「空 main.ts」「読みだけ」「読み＋書き」「読み＋UTF-8＋書き」「理想ループ（全バイト SWAR）」。
+- gVisor（runsc）計測（ユーザー指示、未着手）: docker に runsc は未登録（runc のみ、2026-11-22 夕方確認）。手順は ../makeFun/github-core-clone-01/docs/PROGRESS.md「perf フェーズ4」（gVisor 20261102 を daemon.json に runtime `runsc` で登録、gvisor-bin を /usr/local/bin へ）。ただし手順の tarball は x86_64 で、この Mac の Docker は arm64 → aarch64 版（同じリリースの .../release/20261102/aarch64/）が要る。ダウンロードと daemon 設定の変更・Docker 再起動はユーザー確認のうえで。入れたら multibench を `--runtime=runsc` で回し、空・読みのみ・読み＋書き・現行の net を runc と比べる（runsc の数字を正とする）。grade-local は runc のままにする（runsc 既定だと止まる）。
+- 次の候補（引用符つきの読みを readRecord に取り込む）は未着手。UTF-8 検証を省く件は判断待ちで現状維持。
 - 残りの判断: 提出（bundle・submit）はユーザーの指示待ち。20 時（JST）まで詰める指示。審査上の注意: ルール文面は main.ts が run で解く形を想定しており、変換器は通常 run を呼ばない（ユーザー決定で進めた）。
 
 ## いまの状態（M4 時点）
