@@ -12,7 +12,7 @@ mkdir -p "$OUT"
 #     TEST_CMD="node --test"
 #     TEST_CMD="python3 -m unittest discover -s tests"
 #     TEST_CMD="(cd ../kit && node cli/grade.mjs --bot $REPO)"
-TEST_CMD="node scripts/fuzz.mjs && node kit-dl/csv-reader-speed-01-run-20261121-kit/cli/makefun.mjs grade-local --kit kit-dl/csv-reader-speed-01-run-20261121-kit --bot . --worktree"
+TEST_CMD="node scripts/fuzz.mjs && node scripts/fuzz-main.mjs && node kit-dl/csv-reader-speed-01-run-20261121-kit/cli/makefun.mjs grade-local --kit kit-dl/csv-reader-speed-01-run-20261121-kit --bot . --worktree"
 # ===============================================================
 
 echo "== 規約チェック =="

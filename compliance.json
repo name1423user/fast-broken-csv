@@ -3,8 +3,8 @@
   "exclude_dirs": [".git", "node_modules", ".check", "kit-dl"],
   "max_total_mib": 1,
   "max_file_mib": null,
-  "required_files": ["LICENSE*", "README.md", "package.json", "main.ts", "solve.js"],
-  "source_globs": ["main.ts", "solve.js"],
+  "required_files": ["LICENSE*", "README.md", "package.json", "main.ts", "solve.js", "transducer.js"],
+  "source_globs": ["main.ts", "solve.js", "transducer.js"],
   "forbidden": [
     { "pattern": "WebAssembly|\\.wasm\\b|\\.node['\"]|process\\.dlopen", "message": "WebAssembly・ネイティブは禁止（competition.yaml）", "level": "error", "in": "source" },
     { "pattern": "(?:from|import\\()\\s*['\"](?!node:|\\./|\\.\\./)", "message": "依存の追加は禁止（node: と相対パスだけ読み込める）", "level": "error", "in": "source" },
