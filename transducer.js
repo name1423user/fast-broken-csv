@@ -562,7 +562,8 @@ const loadSolve = async () =>
   runJson ?? (runJson = ((await import(new URL('./solve.js', import.meta.url).href))).runJson);
 
 // 準備走行（header の有無を交互に）。関数は数回呼ばれてから型情報を集め始めるので何周か回す。出力は捨てる。
-for (let k = 0; k < 8; k++) {
+// 1 周だと最適化解除が残り、2 周から 0（Node 22・24 とも）。余裕を見て 3 周。8 周より net 約 5ms 速い。
+for (let k = 0; k < 3; k++) {
   o = 0;
   doCase(len + 8);
   finishCase((k & 1) === 0);
