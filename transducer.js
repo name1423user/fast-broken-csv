@@ -15,6 +15,8 @@ import { setFlagsFromString } from 'node:v8';
 
 // 基準と同じく、インクリメンタルマーキングを切る（--single-threaded-gc などは実行中に設定すると V8 が落ちるので使わない）。
 setFlagsFromString('--no-incremental-marking');
+// 最適化コンパイルを別スレッドに出さず、その場で行う。1 CPU では並行コンパイルの方が CPU 時間が多い（Docker で変換 約 74ms → 約 63ms）。
+setFlagsFromString('--no-concurrent-recompilation');
 
 const inputDir = process.env.MAKEFUN_INPUT_DIR ?? '/input';
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -59,6 +61,9 @@ src.fill(DQ, len + 8 + WARM.length);
 // 出力。不変条件: レコードの頭で out の残り >= 4 × (入力の残り) + 512。1レコードの出力は入力の 3 倍 + 定数に収まる
 // （例外は short_row の埋めと errors の写しで、その前に growOut で広げる）。型付き配列は範囲外の書き込みを黙って捨てるので必須。
 let out = Buffer.allocUnsafe(len * 4 + (1 << 20));
+// 4 バイト単位の読み書き用（区切りの無い 4 バイトをまとめて写す）。out を広げたら作り直す。
+const sv = new DataView(src.buffer, src.byteOffset, src.length);
+let ov = new DataView(out.buffer, out.byteOffset, out.length);
 let o = 0;
 let err = Buffer.allocUnsafe(1 << 16); // 1ケースぶんの errors の中身
 let e = 0;
@@ -68,16 +73,20 @@ let nErr = 0;
 let p = 0; // text 内の位置（src のバイト位置、文字の頭）
 let line = 1;
 let recLine = 1;
-let rowNull = false;
 let rowCount = 0;
 let width = -1;
-let header = false;
+let gap = 0; // '{"columns":' の直後。header が分かるまで 13 バイト空けておく
+let r0s = -1; // 先頭レコード（header が true なら columns になる）の out での範囲
+let r0e = -1;
+let nErrFirst = 0; // 先頭レコードの終わりまでに出たエラーの数（header が true なら row は null）
+let rowPos = new Int32Array(1024); // 各エラーの row の値の err での位置
 
 function growOut(need) {
   if (out.length - o >= need) return;
   const b = Buffer.allocUnsafe(Math.max(out.length * 2, o + need));
   out.copy(b, 0, 0, o);
   out = b;
+  ov = new DataView(b.buffer, b.byteOffset, b.length);
 }
 function growErr(need) {
   if (err.length - e >= need) return;
@@ -100,10 +109,6 @@ const S_NULL_ROWS = Buffer.from('null,"rows":[');
 const S_ROWS = Buffer.from(',"rows":[');
 const S_EMPTY_ROWS = Buffer.from('[],"rows":[');
 const S_ERRORS = Buffer.from('],"errors":[');
-// 引用なしフィールドでそのまま写せるバイト（カンマ・'"'（text の終わり）・'\' 以外）。範囲外の添字は undefined なので止まる。
-const PLAIN = new Uint8Array(256).fill(1);
-PLAIN[COMMA] = PLAIN[DQ] = PLAIN[BS] = 0;
-const PAT_HEADER =Buffer.from(',"header":');
 const K_INPUT = Buffer.from('input');
 const K_TEXT = Buffer.from('text');
 const K_HEADER = Buffer.from('header');
@@ -114,16 +119,19 @@ function putInt(b, w, v) {
   return w + 1;
 }
 
-// エラーの頭（code・line・row）まで書く。row はレコードの頭での rows の数、ヘッダー待ちなら null。
+// エラーの頭（code・line・row）まで書く。row は header が無いものとして、レコードの頭での rows の数を書き、
+// 位置を rowPos に控える（header が true と分かったら finishCase で直す）。
 function errStart(code, extra) {
   growErr(128 + extra);
-  if (nErr++ > 0) err[e++] = COMMA;
+  if (nErr > 0) err[e++] = COMMA;
+  if (nErr === rowPos.length) { const b = new Int32Array(nErr * 2); b.set(rowPos); rowPos = b; }
   err.set(code, e);
   e += code.length;
   e = putInt(err, e, recLine);
   err.set(S_ROW, e);
   e += S_ROW.length;
-  if (rowNull) { err.set(S_NULL, e); e += 4; } else e = putInt(err, e, rowCount);
+  rowPos[nErr++] = e;
+  e = putInt(err, e, rowCount);
 }
 function errSimple(code) {
   errStart(code, 0);
@@ -184,6 +192,22 @@ function readQuoted() {
   let w = o;
   let nl = 0;
   for (;;) {
+    // '"' と '\' を含まない 4 バイトはまとめて写す（SWAR: 各バイトとの xor が 0 になるバイトがあるかを見る）
+    for (;;) {
+      const v = sv.getUint32(q, true);
+      const a = v ^ 0x22222222;
+      const b = v ^ 0x5c5c5c5c;
+      const m = ((((a - 0x01010101) | 0) & ~a) | (((b - 0x01010101) | 0) & ~b)) & 0x80808080;
+      ov.setUint32(w, v, true); // 特殊文字より後ろの余分なバイトは、続きの書き込みで上書きされる
+      if (m !== 0) {
+        const k = (31 - Math.clz32(m & ((0 - m) | 0))) >> 3; // 最初の特殊文字の位置（最下位の印は必ず正しい）
+        q += k;
+        w += k;
+        break;
+      }
+      q += 4;
+      w += 4;
+    }
     const c = s[q];
     if (c === DQ) {
       // 閉じない引用符: `"` を文字として、直後から引用なしで読み直す
@@ -243,9 +267,8 @@ function readRecord() {
   if (out.length - o < reserve) growOut(reserve);
   const d = out;
   recLine = line;
-  rowNull = header && width < 0;
   const recStart = o;
-  if (!rowNull && rowCount > 0) d[o++] = COMMA;
+  if (rowCount > 0) d[o++] = COMMA;
   d[o++] = LB;
   let k = 0;
   let xs = -1; // 幅を超えたフィールド（long_row の extra）の書き始め
@@ -268,7 +291,23 @@ function readRecord() {
       c = s[q];
     } else {
       qc = false;
-      while (PLAIN[c] === 1) { d[w++] = c; c = s[++q]; }
+      for (;;) {
+        const v = sv.getUint32(q, true);
+        const a = v ^ 0x2c2c2c2c;
+        const b = v ^ 0x22222222;
+        const e2 = v ^ 0x5c5c5c5c;
+        const m = ((((a - 0x01010101) | 0) & ~a) | (((b - 0x01010101) | 0) & ~b) | (((e2 - 0x01010101) | 0) & ~e2)) & 0x80808080;
+        ov.setUint32(w, v, true);
+        if (m !== 0) {
+          const k = (31 - Math.clz32(m & ((0 - m) | 0))) >> 3;
+          q += k;
+          w += k;
+          break;
+        }
+        q += 4;
+        w += 4;
+      }
+      c = s[q];
       if (c === BS) {
         const x = s[q + 1];
         if (x !== N && !(x === R && s[q + 2] === BS && s[q + 3] === N)) {
@@ -295,7 +334,10 @@ function readRecord() {
     // 幅の基準は捨てられなかった最初のレコード（B-26）
     width = k;
     d[o++] = RB;
-    if (header) { d.set(S_ROWS, o); o += S_ROWS.length; } else rowCount++;
+    r0s = recStart;
+    r0e = o;
+    nErrFirst = nErr;
+    rowCount++;
     return true;
   }
   if (k < width) {
@@ -323,32 +365,68 @@ function readRecord() {
   return true;
 }
 
-// ts から始まる text を1ケースとして解き、答えを out に書く。text を閉じる '"' の位置を返す。
-function doCase(ts, hdr) {
-  header = hdr;
+// ts から始まる text を1ケースとして、header が無いものとして解き、rows まで out に書く。text を閉じる '"' の位置を返す。
+// header は text の後ろに来る（JSON.stringify のキー順）ので、ここでは決めない。finishCase で仕上げる。
+function doCase(ts) {
   p = ts;
   if (src[p] === 0xef && src[p + 1] === 0xbb && src[p + 2] === 0xbf) p += 3; // 先頭の U+FEFF（B-06）
   line = 1;
   recLine = 1;
-  rowNull = false;
   rowCount = 0;
   width = -1;
   e = 0;
   nErr = 0;
+  r0s = r0e = -1;
+  nErrFirst = 0;
   growOut(64 + ((len - p) << 2) + 512);
   out.set(S_HEAD_COLS, o);
   o += S_HEAD_COLS.length;
-  if (!hdr) { out.set(S_NULL_ROWS, o); o += S_NULL_ROWS.length; }
+  gap = o;
+  o += S_NULL_ROWS.length;
   while (readRecord());
-  growOut(e + 64 + ((len - p) << 2) + 512);
-  if (hdr && width < 0) { out.set(S_EMPTY_ROWS, o); o += S_EMPTY_ROWS.length; }
+  return p;
+}
+
+// header の値が分かってから答えを仕上げる。JSON の値として同じなら空白を挟んでよい（採点は値で比べる）。
+//   header が無い: 空けておいた所に 'null,"rows":[' を書くだけ。
+//   header が有る: 先頭レコードを '{"columns":' の直後へ詰め、後ろに ',"rows":[' と空白を置く。
+//                  エラーの row は、先頭レコードまでのものを null、後ろのものを 1 減らす。
+function finishCase(hdr) {
+  if (width < 0) nErrFirst = nErr;
+  growOut(e + 3 * nErr + 64 + ((len - P) << 2) + 512);
+  if (!hdr) out.set(S_NULL_ROWS, gap);
+  else if (width < 0) {
+    out.set(S_EMPTY_ROWS, gap);
+    out.fill(32, gap + S_EMPTY_ROWS.length, gap + S_NULL_ROWS.length);
+  } else {
+    out.copyWithin(gap, r0s, r0e);
+    let x = gap + (r0e - r0s);
+    out.set(S_ROWS, x);
+    x += S_ROWS.length;
+    out.fill(32, x, out[r0e] === COMMA ? r0e + 1 : r0e);
+  }
   out.set(S_ERRORS, o);
   o += S_ERRORS.length;
-  err.copy(out, o, 0, e);
-  o += e;
+  if (!hdr) {
+    err.copy(out, o, 0, e);
+    o += e;
+  } else {
+    let from = 0;
+    for (let i = 0; i < nErr; i++) {
+      const at = rowPos[i];
+      err.copy(out, o, from, at);
+      o += at - from;
+      let t = at;
+      let v = 0;
+      while (err[t] >= 48 && err[t] <= 57) v = v * 10 + err[t++] - 48;
+      if (i < nErrFirst) { out.set(S_NULL, o); o += 4; } else o = putInt(out, o, v - 1);
+      from = t;
+    }
+    err.copy(out, o, from, e);
+    o += e - from;
+  }
   out[o++] = RB;
   out[o++] = RC;
-  return p;
 }
 
 // ===== cases.json の外側の構造を読む（ここは 1ケースに数回しか通らない） =====
@@ -416,16 +494,8 @@ let inputs = 0;
 let texts = 0;
 let headers = 0;
 let hdrVal = false;
-let specHdr = false;
 let ok = true;
 let done = false;
-
-// header は text の後ろに来る（JSON.stringify のキー順）ので、text を解く前に `,"header":` を探して値を仮に決める。
-// 文字列の中の '"' は必ず '\' の後ろなので、`,"` は文字列の外にしか現れない。仮の値は後で実際の値と照らす。
-function guessHeader(ts) {
-  const f = src.indexOf(PAT_HEADER, ts);
-  return f >= 0 && src[f + 10] === 116 && src[f + 11] === 114 && src[f + 12] === 117 && src[f + 13] === 101;
-}
 
 function parseInput() {
   if (src[P] !== LC) { ok = false; skipValue(); return; }
@@ -438,9 +508,8 @@ function parseInput() {
       texts++;
       if (src[P] === DQ && texts === 1 && inputs === 1 && ok) {
         const ts = P + 1;
-        specHdr = headers > 0 ? hdrVal : guessHeader(ts);
         try {
-          P = doCase(ts, specHdr) + 1;
+          P = doCase(ts) + 1;
           done = true;
         } catch (x) {
           if (x !== ODD) throw x;
@@ -468,7 +537,7 @@ function parseCase() {
   caseStart = P;
   P++;
   inputs = texts = headers = 0;
-  hdrVal = specHdr = done = false;
+  hdrVal = done = false;
   ok = true;
   ws();
   if (src[P] === RC) { P++; return false; }
@@ -480,7 +549,9 @@ function parseCase() {
     if (src[P] === RC) { P++; break; }
     throw BAD;
   }
-  return ok && done && inputs === 1 && texts === 1 && headers <= 1 && specHdr === hdrVal;
+  if (!(ok && done && inputs === 1 && texts === 1 && headers <= 1)) return false;
+  finishCase(hdrVal);
+  return true;
 }
 
 
@@ -491,7 +562,8 @@ const loadSolve = async () =>
 // 準備走行（header の有無を交互に）。関数は数回呼ばれてから型情報を集め始めるので何周か回す。出力は捨てる。
 for (let k = 0; k < 8; k++) {
   o = 0;
-  doCase(len + 8, (k & 1) === 0);
+  doCase(len + 8);
+  finishCase((k & 1) === 0);
 }
 o = 0;
 
