@@ -1,0 +1,4 @@
+kit-dl/
+# ログイン記録（ウォレットとホームのパスを含む）
+login.log
+.DS_Store
