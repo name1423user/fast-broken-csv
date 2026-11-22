@@ -5,7 +5,7 @@
 ## 2026-11-22 午後の追記（M5: バイト列変換器。上の「いまの状態」より新しい）
 
 - 方針（ユーザー決定）: main.ts は1行の import、本体は transducer.js（cases.json をバイトのまま走査して答えの JSON を直接書く）。solve.js は正しさのアンカーとフォールバック。純 JS のみ。
-- 最新の push: 54ca6d9（準備走行 3 周）。その前: 88131f3（ループ展開を切る）、92237f4（header 後決め・SWAR）、09b22f7（変換器化）。
+- 最新の push: 下の「18 時の追記」で transducer.js を更新（1MB ごとの書き出し＋ --no-sparkplug）。その前は 54ca6d9（準備走行 3 周）。その前: 88131f3（ループ展開を切る）、92237f4（header 後決め・SWAR）、09b22f7（変換器化）。
 - 外部の独立計測（ユーザー）: 練習 6/6、別シード 5 セット 30 ケース完全一致。net は旧 0.358 秒 → 0.043 秒 → ほぼ 0（gross 0.313 → 0.270 秒）。
 - 手元 Docker（scratch の multibench、15 回の中央値、空実行を引いた net）: 現行 64.4ms / 理想ループの床（全バイトを SWAR で1回なめるだけ）42.1ms / 入出力の床（読み＋UTF-8 検証＋12MB 書き）17.7ms / 読みだけ 4.8ms。
 - 効いたもの: 型除去を避ける（main.ts を1行に）、準備走行（型情報不足の最適化解除 18 回→0）、`--no-concurrent-recompilation`、`--no-turbo-loop-peeling`、header 後決め（indexOf をやめる）、SWAR、準備走行 8→3 周。
@@ -44,6 +44,40 @@
   - 40 周の予備計測では runsc の区間が ±5〜7ms で、±2ms には 500 周が要った（runsc の1回の値は 60〜110ms と大きくばらつく）。
 - 解釈と次の手（仮説、未検証）: 処理部分が runsc で約 1.5 倍になるのは、上の「同時に走るスレッドを二重に数える」規則で、V8 の補助スレッド（並行マーキング・スイーパー・コンパイル）の時間がそのまま上乗せされている可能性が高い。補助スレッドを減らすフラグ（`--single-threaded-gc` は実行中に設定すると落ちるので不可。`--no-concurrent-sweeping`・`--no-parallel-scavenge`・`--no-concurrent-marking` の類など）は、**runc では差が出なくても runsc で効くことがある**。速度の判断は今後この環境の runsc net で行う。
 - 注意: 絶対値は本番（x86 の貸し機）とは違う。runsc と runc の差・版どうしの差を見る道具として使う。Mac の負荷が高いときは周回を増やす。計測中に他の重い処理（grade-local・fuzz）を同時に走らせない。
+
+## 2026-11-22 18 時の追記: クラウドブランチの変更と V8 フラグを runsc で対決
+
+- 方法は上の節と同じ（`scripts/gvisor/run.sh <周回> <版,...> [runc,runsc]`、20% トリム平均、net = 版 − null、± は 95% 区間）。版はすべて `setFlagsFromString` の行の追加か、コミットの transducer.js そのもの（scratch で作成、提出物は未変更）。全回で答えは expected.json とバイト一致。
+- **① クラウドブランチ（e108f66 まで、ブランチ自体は読むだけ）。500 周、現行版 54ca6d9 との差（ms）**:
+
+  | 版 | 中身 | runc 差 | runsc 差 | runsc net |
+  |---|---|---|---|---|
+  | cur（54ca6d9） | 基準 | — | — | 76.8 ±1.8 |
+  | fl（9954112） | 1MB ごとに書き出し、out を使い直す | **−3.2 ±0.3** | −0.5 ±2.7 | 76.3 ±1.9 |
+  | flcpy | fl ＋ Buffer#copy をループに | −3.0 ±0.4 | +2.0 ±2.4 | 78.8 ±1.7 |
+  | flinl | fl ＋ `--no-turbo-inlining` | −3.4 ±0.4 | −0.8 ±2.3 | 75.9 ±1.7 |
+  | cloud（e108f66） | fl ＋ 両方 | −3.1 ±0.4 | 0.0 ±2.5 | 76.8 ±1.8 |
+
+  - runc で効くのは fl（書き出しの分割）だけ。c2 の2つ（ループ化・インライン化オフ）は上乗せなし。
+  - **runsc ではどれも誤差の中で、勝った変更なし**。クラウド側の「runsc net 224→204ms、251→235ms」（合成入力・別環境）は、この環境の練習セットでは再現しない。
+- **② 補助スレッドの二重カウント仮説: 支持されない**。500 周、現行版との差（ms）:
+
+  | 版 | フラグ | runc 差 | runsc 差 |
+  |---|---|---|---|
+  | ncm | `--no-concurrent-marking` | 0.0 ±0.2 | −1.3 ±2.6 |
+  | nps | `--no-parallel-scavenge` | −0.4 ±0.4 | −0.7 ±2.1 |
+  | ncs | `--no-concurrent-sweeping` | +0.1 ±0.4 | +0.8 ±1.6 |
+  | gcall | 上3つ＋ array-buffer-sweeping・parallel-marking/compaction/pointer-update/weak-ref-clearing をすべてオフ | +0.1 ±0.3 | −0.7 ±2.4 |
+  | comp | `--no-concurrent-osr --no-concurrent-sparkplug --no-parallel-compile-tasks-for-lazy --no-concurrent-cache-deserialization` | 0.0 ±0.3 | −0.8 ±2.0 |
+  | spin（対照） | 単一スレッドの整数ループだけ（runc net 56.9ms） | — | runsc−runc の net 差 **+1.5 ±1.4** |
+
+  - 裏付け: 現行版の GC は練習セットで Scavenge 2 回（計 1ms 未満）だけ。最適化コンパイルはすでに同期（`--no-concurrent-recompilation`）。runsc 内の node は 7 スレッド・nproc 2 で二重カウントは起こりうる条件だが、補助スレッドの仕事がほぼ無い。
+  - `--no-concurrent-marking` は、インクリメンタルマーキングを切った状態なら実行中に設定しても落ちない（以前の「落ちる」は別の組み合わせ）。
+  - 単一スレッドの計算（spin）は gVisor でほぼ膨らまないのに、現行版は runsc で約 +20ms（net 57→77ms）。読み・書きの床も膨らまない。残る候補は JIT のコード生成（コード領域の確保・保護の切り替えのシステムコール）だが、未検証。
+- ③ 追加で試したコンパイル段のフラグ（400 周）: `--no-sparkplug` は runc **−3.4 ±0.3**、runsc −1.6 ±2.0（誤差の中）。`--no-maglev` は runc +0.1・runsc −0.4、両方オフは `--no-sparkplug` と同じ。
+- **④ 勝った変更: fl（9954112 の書き出し分割）＋ `--no-sparkplug`** を合わせた版。runsc 1000 周で net 78.4 ±1.3 → **72.0 ±1.7ms（差 −6.4 ±1.0ms）**。runc 200 周で 59.1 → 52.3ms（差 −6.8 ±0.5ms）。単独ではどちらも runsc の誤差に埋もれていたが、合わせて 1000 周にするとはっきり勝つ。
+- **main に取り込み済み**（transducer.js のみ。9954112 の transducer.js の差分そのまま＋ `setFlagsFromString('--no-sparkplug')` の1行とコメント）。c2 のループ化・`--no-turbo-inlining` は勝っていないので取り込まない。検証: `bash scripts/heavy.sh bash scripts/check.sh` で規約 OK・fuzz 420 件不一致 0・fuzz-main 32 回不一致 0・grade-local 6/6（2回実行でバイト一致）。
+- 次の候補: runsc で現行版だけ +20ms 膨らむ原因（JIT のコード生成のシステムコール説）の確認。runsc の1回の値は 10ms 刻みでばらつくので、3ms 前後の差を見るには 1000 周（runsc のみ・3版で約 12 分）が要る。
 
 ## いまの状態（M4 時点）
 

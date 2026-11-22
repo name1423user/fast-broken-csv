@@ -19,6 +19,9 @@ setFlagsFromString('--no-incremental-marking');
 setFlagsFromString('--no-concurrent-recompilation');
 // TurboFan のループ展開（peeling）を切る。コンパイルが軽くなり、Docker の bench で net 約 79ms → 約 67ms（他の turbo-* は誤差）。
 setFlagsFromString('--no-turbo-loop-peeling');
+// Sparkplug（ベースライン JIT）を切る。gVisor（colima runsc、練習セット 1000 周）で上の 1MB ごとの書き出しと合わせて
+// net 78.4ms → 72.0ms（−6.4 ±1.0ms）、runc でも単独で約 −3.4ms。
+setFlagsFromString('--no-sparkplug');
 
 const inputDir = process.env.MAKEFUN_INPUT_DIR ?? '/input';
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -570,8 +573,12 @@ for (let k = 0; k < 3; k++) {
 }
 o = 0;
 
+// 1ケース書くごとに、たまった分（1MB 以上）をファイルへ出して out の頭から使い直す。触るページが 12MB → 約 2MB になり、
+// ページフォールトの高い gVisor（runsc）で net 約 224ms → 約 204ms、runc でも約 136ms → 約 125ms（合成入力、15 回の中央値）。
+const FLUSH = 1 << 20;
 const answersPath = join(outputDir, 'answers.json');
 let whole = !isUtf8(src.subarray(0, len));
+const fdOut = openSync(answersPath, 'w');
 if (!whole) {
   try {
     ws();
@@ -591,6 +598,7 @@ if (!whole) {
           growOut(Buffer.byteLength(answer) + ((len - P) << 2) + 512);
           o += out.write(answer, o);
         }
+        if (o >= FLUSH) { writeSync(fdOut, out, 0, o); o = 0; }
         ws();
         if (src[P] === COMMA) { P++; continue; }
         if (src[P] === RB) { P++; break; }
@@ -606,8 +614,9 @@ if (!whole) {
   }
 }
 
-if (!whole) writeFileSync(answersPath, out.subarray(0, o));
+if (!whole) { writeSync(fdOut, out, 0, o); closeSync(fdOut); }
 else {
+  closeSync(fdOut);
   // 元のやり方: JSON.parse して各ケースを runJson（JSON.stringify(run(input)) とバイト単位で同じ）で解く
   const solve = await loadSolve();
   const cases = JSON.parse(src.toString('utf8', 0, len));

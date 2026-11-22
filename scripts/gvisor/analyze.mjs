@@ -26,23 +26,33 @@ const get = (rt, bot) => ok.filter((r) => r.rt === rt && r.bot === bot).map((r) 
 const pm = ([lo, hi]) => `±${((hi - lo) / 2).toFixed(1)}`;
 console.log('runtime bot   n   gross(ms)        net(ms, -null)');
 const net = {};
-for (const rt of ['runc', 'runsc']) {
+const rts = [...new Set(ok.map((r) => r.rt))].sort();
+const bots = ['null', ...[...new Set(ok.map((r) => r.bot))].filter((b) => b !== 'null')];
+for (const rt of rts) {
   const n0 = get(rt, 'null');
-  for (const bot of ['null', 'read', 'rw', 'cur']) {
+  for (const bot of bots) {
     const xs = get(rt, bot);
     const g = trim(xs);
     const nv = g - trim(n0);
     net[rt + bot] = { xs, n0 };
     const nci = bot === 'null' ? '' : `${nv.toFixed(1).padStart(7)} ${pm(ci(() => trim(resample(xs)) - trim(resample(n0))))}`;
-    console.log(`${rt.padEnd(7)} ${bot.padEnd(5)} ${String(xs.length).padStart(3)} ${g.toFixed(1).padStart(7)} ${pm(ci(() => trim(resample(xs))))}  ${nci}`);
+    console.log(`${rt.padEnd(7)} ${bot.padEnd(8)} ${String(xs.length).padStart(3)} ${g.toFixed(1).padStart(7)} ${pm(ci(() => trim(resample(xs))))}  ${nci}`);
   }
 }
 // runsc − runc の net の差（版ごと）
-for (const bot of ['read', 'rw', 'cur']) {
+if (rts.length === 2) for (const bot of bots.slice(1)) {
   const a = net['runsc' + bot], b = net['runc' + bot];
   const d = (trim(a.xs) - trim(a.n0)) - (trim(b.xs) - trim(b.n0));
   const c = ci(() => (trim(resample(a.xs)) - trim(resample(a.n0))) - (trim(resample(b.xs)) - trim(resample(b.n0))));
-  console.log(`net 差 runsc−runc ${bot.padEnd(4)} ${d.toFixed(1)} ms ${pm(c)}`);
+  console.log(`net 差 runsc−runc ${bot.padEnd(8)} ${d.toFixed(1)} ms ${pm(c)}`);
 }
 const steal = ok.reduce((a, r) => a + r.steal, 0);
 console.log(`VM steal 合計 ${steal} ticks / ${ok.length} 回、load1 ${Math.min(...ok.map((r) => r.load))}〜${Math.max(...ok.map((r) => r.load))}`);
+// 基準の版（環境変数 BASE、既定 cur）との差: 同じランタイム内の gross の差 = net の差
+const base = process.env.BASE ?? 'cur';
+if (bots.includes(base)) for (const rt of rts) for (const bot of bots) {
+  if (bot === base || bot === 'null') continue;
+  const a = get(rt, bot), b = get(rt, base);
+  const c = ci(() => trim(resample(a)) - trim(resample(b)));
+  console.log(`${rt.padEnd(6)} ${bot.padEnd(8)} − ${base}: ${(trim(a) - trim(b)).toFixed(1).padStart(6)} ms ${pm(c)}`);
+}
