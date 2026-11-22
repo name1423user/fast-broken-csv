@@ -11,6 +11,9 @@
 - 効いたもの: 型除去を避ける（main.ts を1行に）、準備走行（型情報不足の最適化解除 18 回→0）、`--no-concurrent-recompilation`、`--no-turbo-loop-peeling`、header 後決め（indexOf をやめる）、SWAR、準備走行 8→3 周。
 - 効かなかったもの: V8 の段階フラグ（invocation-count 系・no-maglev・Maglev のみ）、他の turbo-* フラグ、カンマを SWAR ループ内で処理（遅くなった）、readPlain の SWAR 化（差なし）、準備走行を長くする。
 - 検証: `bash scripts/heavy.sh bash scripts/check.sh`（規約 → fuzz 420 件 → fuzz-main 32 回 → grade-local）。重い処理は必ず scripts/heavy.sh を通して直列に。
+- 16 時以降に試して効かなかったもの: DataView をローカル変数に写す（差なし）、readPlain の SWAR 化（差なし、戻した）。
+- 次に試す候補（未着手）: 引用符つきフィールドの読みを readRecord に取り込む（関数呼び出し 9.5 万回とグローバル同期を省く。ただしカンマのその場処理は遅くなったので要計測）、UTF-8 検証（約 2.5ms）を省くかどうかはユーザー判断（JSON.stringify の出力では不正な UTF-8 は起きないが、全入力での一致の保証が外れる）。
+- 計測の道具（scratch、別セッションでは作り直し）: multibench.mjs（複数ボットを交互に Docker 実行して cgroup の CPU 時間の中央値）、variant.py（transducer.js の置換コピー）、mkvar.sh、lineprof.sh。床の構成は「空 main.ts」「読みだけ」「読み＋書き」「読み＋UTF-8＋書き」「理想ループ（全バイト SWAR）」。
 - 残りの判断: 提出（bundle・submit）はユーザーの指示待ち。20 時（JST）まで詰める指示。審査上の注意: ルール文面は main.ts が run で解く形を想定しており、変換器は通常 run を呼ばない（ユーザー決定で進めた）。
 
 ## いまの状態（M4 時点）
