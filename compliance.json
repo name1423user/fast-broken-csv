@@ -1,0 +1,17 @@
+{
+  "_説明": "scripts/compliance.py の設定。null は上限なし。forbidden の level は error か warn、in は source（source_globs のファイル）か all。行末に allow-compliance と書いた行は除外される。README.md は M4-T01 で作るので、そのとき required_files に足す。",
+  "exclude_dirs": [".git", "node_modules", ".check", "kit-dl"],
+  "max_total_mib": 1,
+  "max_file_mib": null,
+  "required_files": ["LICENSE*", "package.json", "main.ts", "solve.js"],
+  "source_globs": ["main.ts", "solve.js"],
+  "forbidden": [
+    { "pattern": "WebAssembly|\\.wasm\\b|\\.node['\"]|process\\.dlopen", "message": "WebAssembly・ネイティブは禁止（competition.yaml）", "level": "error", "in": "source" },
+    { "pattern": "(?:from|import\\()\\s*['\"](?!node:|\\./|\\.\\./)", "message": "依存の追加は禁止（node: と相対パスだけ読み込める）", "level": "error", "in": "source" },
+    { "pattern": "\\brequire\\(", "message": "solve.js / main.ts は ES モジュール。require は使わない", "level": "error", "in": "source" },
+    { "pattern": "Math\\.random|Date\\.now|new Date\\(|performance\\.now", "message": "2回実行の出力がバイト一致する必要がある（不定要素）", "level": "error", "in": "source" },
+    { "pattern": "\\{\\{[A-Z_]+\\}\\}", "message": "テンプレの穴埋め（{{...}}）が残っています", "level": "warn", "in": "all", "files": ["CLAUDE.md", ".claude/agents/*.md", "scripts/check.sh"] },
+    { "pattern": "TEMPLATE-STATE", "message": "CLAUDE.md がテンプレの状態のままです", "level": "warn", "in": "all", "files": ["CLAUDE.md"] }
+  ],
+  "secret_scan_max_mib": 2
+}

@@ -2,3 +2,9 @@ kit-dl/
 # ログイン記録（ウォレットとホームのパスを含む）
 login.log
 .DS_Store
+.check/
+.env
+.env.*
+*keypair*.json
+*.pem
+*.key
