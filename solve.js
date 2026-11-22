@@ -1,4 +1,5 @@
-// csv-reader 1.0.0 と同じ答えを返す CSV の読み込み（M2-T02）。1パス、charCodeAt で走査し、値は slice で切り出す。
+// csv-reader 1.0.0 と同じ答えを返す CSV の読み込み（M2-T02、M3 で高速化）。区切りは indexOf で探し、値は slice で切り出す。
+// 読みを小さな関数に分けているのは、run 1回で長いテキストを読むため（大きな run の中のループは OSR 頼みになり遅い）。
 // 挙動の根拠は docs/BASELINE_NOTES.md（B-xx）。状態はすべて run() の中に置き、ケース間で持ち越さない。
 
 const QUOTE = 34;
@@ -19,9 +20,20 @@ export function run(input) {
   let line = 1;
   let recLine = 1;
   let row = null;
+  let nextCR = -1;
+  let nextComma = -1;
+  let nextLF = -1;
+  let quotedClosed = false;
 
   // 引用なしの読み（B-11・B-18・B-22）。カンマ・LF・CRLF・末尾の手前まで。単独 CR は捨てて stray_cr。
   function readPlain(p) {
+    // 速い経路: 次のカンマ・LF の手前に CR が無ければ slice 1回（CRLF の CR で止まる場合も含む）
+    if (nextComma < p) { nextComma = text.indexOf(',', p); if (nextComma < 0) nextComma = n; }
+    if (nextLF < p) { nextLF = text.indexOf('\n', p); if (nextLF < 0) nextLF = n; }
+    if (nextCR < p) { nextCR = text.indexOf('\r', p); if (nextCR < 0) nextCR = n; }
+    const stop = nextComma < nextLF ? nextComma : nextLF;
+    if (nextCR >= stop) { i = stop; return text.slice(p, stop); }
+    if (nextCR === stop - 1 && stop === nextLF && stop < n) { i = stop - 1; return text.slice(p, stop - 1); }
     let out = '';
     let seg = p;
     while (p < n) {
@@ -40,6 +52,66 @@ export function run(input) {
     return seg === p ? out : out + text.slice(seg, p);
   }
 
+  // 引用符つきフィールドを q から読む。閉じたら quotedClosed を立てる。
+  function readQuoted(q) {
+    // 引用符つき（B-16・B-17）。閉じるまで line は仮に数え、閉じたときだけ確定する。
+    let p = q + 1;
+    let seg = p;
+    let out = '';
+    let nl = 0;
+    let closed = false;
+    // 次の `"` まで indexOf で飛ぶ。間の CR は LF に置き換え（CRLF は LF 1つ）、行数は LF の数 + LF が続かない CR の数。
+    // 末尾まで探してよい: 閉じない引用符は1テキストに高々1つ（開き引用符の連なりが最後の奇数長の連なりのときだけ）
+    for (;;) {
+      let qp = text.indexOf('"', p);
+      if (qp < 0) qp = n;
+      if (nextCR < p) { nextCR = text.indexOf('\r', p); if (nextCR < 0) nextCR = n; }
+      if (nextLF < p) { nextLF = text.indexOf('\n', p); if (nextLF < 0) nextLF = n; }
+      while (nextLF < qp) { nl++; nextLF = text.indexOf('\n', nextLF + 1); if (nextLF < 0) nextLF = n; }
+      while (nextCR < qp) {
+        out += text.slice(seg, nextCR) + '\n';
+        if (text.charCodeAt(nextCR + 1) === LF) seg = nextCR + 2;
+        else { seg = nextCR + 1; nl++; }
+        nextCR = text.indexOf('\r', seg); if (nextCR < 0) nextCR = n;
+      }
+      if (qp >= n) break;
+      if (text.charCodeAt(qp + 1) === QUOTE) { out += text.slice(seg, qp + 1); p = seg = qp + 2; }
+      else { out += text.slice(seg, qp); p = qp + 1; closed = true; break; }
+    }
+    if (closed) {
+      line += nl;
+      quotedClosed = true;
+      const c = text.charCodeAt(p);
+      if (p >= n || c === COMMA || c === LF || (c === CR && text.charCodeAt(p + 1) === LF)) {
+        i = p;
+        return out;
+      } else {
+        const junk = readPlain(p); // B-18・B-19
+        if (junk.length > 0) errors.push({ code: 'quote_junk', line: recLine, row });
+        return out + junk;
+      }
+    } else {
+      // 閉じない引用符（B-21〜B-25）: `"` を文字として、直後から引用なしで読み直す
+      errors.push({ code: 'unterminated_quote', line: recLine, row });
+      nextCR = nextLF = -1; // 閉じ探しで末尾まで進めた位置は q より後ろを指すので捨てる
+      return '"' + readPlain(q + 1);
+    }
+  }
+
+  // 1レコードのフィールドを読み、レコード末の改行の後ろまで進む。quotedClosed は最後のフィールドが閉じた引用符つきか。
+  function readFields() {
+    const fields = [];
+    for (;;) {
+      quotedClosed = false;
+      fields.push(text.charCodeAt(i) === QUOTE ? readQuoted(i) : readPlain(i));
+      const c = text.charCodeAt(i);
+      if (c === COMMA) { i++; continue; }
+      if (c === LF) { i++; line++; }
+      else if (c === CR) { i += 2; line++; } // readPlain は CRLF の CR でしか止まらない
+      return fields;
+    }
+  }
+
   for (;;) {
     // 空行（LF / CRLF だけ）を飛ばす（B-08）
     while (i < n) {
@@ -52,68 +124,10 @@ export function run(input) {
 
     recLine = line;
     row = header && width < 0 ? null : rows.length;
-    const fields = [];
-    let lastQuoted = false;
-
-    for (;;) {
-      let value;
-      lastQuoted = false;
-      if (text.charCodeAt(i) === QUOTE) {
-        // 引用符つき（B-16・B-17）。閉じるまで line は仮に数え、閉じたときだけ確定する。
-        const q = i;
-        let p = q + 1;
-        let seg = p;
-        let out = '';
-        let nl = 0;
-        let closed = false;
-        for (;;) {
-          // 末尾まで探してよい: 閉じない引用符は1テキストに高々1つ（開き引用符の連なりが最後の奇数長の連なりのときだけ）
-          if (p >= n) break;
-          const c = text.charCodeAt(p);
-          if (c === QUOTE) {
-            if (text.charCodeAt(p + 1) === QUOTE) { out += text.slice(seg, p + 1); p += 2; seg = p; }
-            else { out += text.slice(seg, p); p++; closed = true; break; }
-          } else if (c === CR) {
-            out += text.slice(seg, p) + '\n';
-            nl++;
-            p += text.charCodeAt(p + 1) === LF ? 2 : 1;
-            seg = p;
-          } else {
-            if (c === LF) nl++;
-            p++;
-          }
-        }
-        if (closed) {
-          line += nl;
-          lastQuoted = true;
-          const c = text.charCodeAt(p);
-          if (p >= n || c === COMMA || c === LF || (c === CR && text.charCodeAt(p + 1) === LF)) {
-            i = p;
-            value = out;
-          } else {
-            const junk = readPlain(p); // B-18・B-19
-            value = out + junk;
-            if (junk.length > 0) errors.push({ code: 'quote_junk', line: recLine, row });
-          }
-        } else {
-          // 閉じない引用符（B-21〜B-25）: `"` を文字として、直後から引用なしで読み直す
-          errors.push({ code: 'unterminated_quote', line: recLine, row });
-          value = '"' + readPlain(q + 1);
-        }
-      } else {
-        value = readPlain(i);
-      }
-      fields.push(value);
-
-      const c = text.charCodeAt(i);
-      if (c === COMMA) { i++; continue; }
-      if (c === LF) { i++; line++; }
-      else if (c === CR) { i += 2; line++; } // readPlain は CRLF の CR でしか止まらない
-      break;
-    }
+    const fields = readFields();
 
     // 単独 CR だけの行などはレコードにしない（errors は残す、B-09）
-    if (fields.length === 1 && !lastQuoted && fields[0] === '') continue;
+    if (fields.length === 1 && !quotedClosed && fields[0] === '') continue;
 
     if (width < 0) {
       width = fields.length;
