@@ -17,6 +17,8 @@ import { setFlagsFromString } from 'node:v8';
 setFlagsFromString('--no-incremental-marking');
 // 最適化コンパイルを別スレッドに出さず、その場で行う。1 CPU では並行コンパイルの方が CPU 時間が多い（Docker で変換 約 74ms → 約 63ms）。
 setFlagsFromString('--no-concurrent-recompilation');
+// TurboFan のループ展開（peeling）を切る。コンパイルが軽くなり、Docker の bench で net 約 79ms → 約 67ms（他の turbo-* は誤差）。
+setFlagsFromString('--no-turbo-loop-peeling');
 
 const inputDir = process.env.MAKEFUN_INPUT_DIR ?? '/input';
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';

@@ -12,4 +12,5 @@
   - header を text の前に探すのをやめた（`,"header":` の Buffer.indexOf が全テキストを舐めていた）。header が無いものとして書き、値が分かってから先頭レコードを columns の位置へ詰め、エラーの row を直す（先頭レコードまで null、後ろは 1 減らす）。詰めた後に空白が入るが、採点は JSON の値で比べるので同じ。
   - 区切りの無い 4 バイトを DataView でまとめて写す（SWAR）。特殊文字の位置は Math.clz32 で求め、1 バイトずつの後始末を省く。
   - `--no-concurrent-recompilation` を実行中に設定（1 CPU では並行コンパイルの方が CPU 時間が多い）。
+  - `--no-turbo-loop-peeling` を実行中に設定（TurboFan のコンパイルが軽くなる。net 約 79ms → 約 67ms。他の turbo-* フラグは誤差）。
   - 床（Docker、空実行を引いた net）: 読みだけ 4.8ms、読み＋12MB 書き 14.2ms、読み＋UTF-8 検証＋書き 16.6ms。
