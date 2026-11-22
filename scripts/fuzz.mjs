@@ -23,7 +23,7 @@ const entryUrl = args[0] ? pathToFileURL(resolve(args[0])).href : new URL('solve
 const { run: oracle } = await import(new URL('oracle.js', gen).href);
 const { generate } = await import(new URL('subject/csv-cases.mjs', gen).href);
 const { streamFor } = await import(new URL('rng.ts', gen).href);
-const { run: entry } = await import(entryUrl);
+const { run: entry, runJson: entryJson } = await import(entryUrl);
 
 /** 採点と同じく JSON を通した値（undefined は null）。 */
 const asJson = (v) => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
@@ -49,7 +49,10 @@ function check(id, input) {
   const want = asJson(oracle({ ...input }));
   let got;
   try {
-    got = asJson(entry({ ...input }));
+    const value = entry({ ...input });
+    got = asJson(value);
+    // main.ts は runJson の文字列を書くので、JSON.stringify(run(...)) とバイト一致することも確かめる
+    if (entryJson && entryJson({ ...input }) !== JSON.stringify(value)) got = 'runJson が JSON.stringify(run(...)) と一致しない';
   } catch (e) {
     got = `throws: ${e?.message ?? e}`;
   }

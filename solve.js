@@ -23,6 +23,8 @@ let header = false;
 let rows = null;
 let columns = null;
 let width = -1; // 幅の基準（捨てられなかった最初のレコードのフィールド数、B-26）
+let tmpl = null; // 幅ぶんの '' の配列。レコードの配列をこれの slice で作り、push での伸ばしなおしと余分な容量を避ける
+let asJson = false; // runJson のとき true。rows に配列ではなく JSON.stringify した文字列を入れる
 
 // 引用なしの読み（B-11・B-18・B-22）。カンマ・LF・CRLF・末尾の手前まで。単独 CR は捨てて stray_cr。
 function readPlain(p) {
@@ -99,14 +101,18 @@ function readQuoted(q) {
 
 // 1レコードのフィールドを読み、レコード末の改行の後ろまで進む。quotedClosed は最後のフィールドが閉じた引用符つきか。
 function readFields() {
-  const fields = [];
+  const fields = tmpl.slice();
+  let k = 0;
   for (;;) {
     quotedClosed = false;
-    fields.push(text.charCodeAt(i) === QUOTE ? readQuoted(i) : readPlain(i));
+    const v = text.charCodeAt(i) === QUOTE ? readQuoted(i) : readPlain(i);
+    if (k < fields.length) fields[k] = v; else fields.push(v);
+    k++;
     const c = text.charCodeAt(i);
     if (c === COMMA) { i++; continue; }
     if (c === LF) { i++; line++; }
     else if (c === CR) { i += 2; line++; } // readPlain は CRLF の CR でしか止まらない
+    if (k < fields.length) fields.length = k;
     return fields;
   }
 }
@@ -132,8 +138,9 @@ function readRecord() {
 
   if (width < 0) {
     width = fields.length;
+    tmpl = fields.slice().fill('');
     if (header) columns = fields;
-    else rows.push(fields);
+    else rows.push(asJson ? JSON.stringify(fields) : fields);
     return true;
   }
   const len = fields.length;
@@ -144,19 +151,22 @@ function readRecord() {
     errors.push({ code: 'long_row', line: recLine, row, extra: fields.slice(width) });
     fields.length = width;
   }
-  rows.push(fields);
+  // runJson では行をすぐ JSON にする。配列とフィールドの文字列が若い世代のうちに捨てられ、最後の stringify も軽くなる
+  rows.push(asJson ? JSON.stringify(fields) : fields);
   return true;
 }
 
-/** @param {{text: string, header: boolean}} input */
-export function run(input) {
+// 読みの本体。rows は asJson に応じて配列か JSON 文字列の並び。
+function parse(input, json) {
   text = String(input.text);
   header = input.header === true; // B-01
+  asJson = json;
   n = text.length;
   rows = [];
   errors = [];
   columns = null;
   width = -1;
+  tmpl = [];
   i = text.charCodeAt(0) === 0xfeff ? 1 : 0; // B-06
   line = 1;
   recLine = 1;
@@ -165,6 +175,17 @@ export function run(input) {
   quotedClosed = false;
   while (readRecord());
   const out = { columns: header ? (columns ?? []) : null, rows, errors };
-  text = ''; rows = errors = columns = row = null; // 次の run に持ち越さない
+  text = ''; rows = errors = columns = row = tmpl = null; // 次の run に持ち越さない
   return out;
+}
+
+/** @param {{text: string, header: boolean}} input */
+export function run(input) {
+  return parse(input, false);
+}
+
+/** JSON.stringify(run(input)) とバイト単位で同じ文字列を返す（行ごとに stringify して最後につなぐ）。 */
+export function runJson(input) {
+  const r = parse(input, true);
+  return '{"columns":' + JSON.stringify(r.columns) + ',"rows":[' + r.rows.join(',') + '],"errors":' + JSON.stringify(r.errors) + '}';
 }

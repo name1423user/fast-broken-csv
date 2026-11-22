@@ -2,6 +2,7 @@
 
 | 日時 | 版 | 合格/総数 | スコア | メモ |
 |---|---|---|---|---|
+| 2026-11-22 12:20 JST | 0.1.0 | 6/6 | passed=1、bench 比 0.213 | M3 第3弾: --single-threaded-gc を削除（3倍入力で V8 が落ちる不具合）。runJson（行ごとに stringify）＋ケースごとの書き出し＋幅の雛形配列。fuzz 1310 件・runJson 一致 1392 件、3倍入力 0/3 失敗 |
 | 2026-11-22 11:45 JST | 0.1.0 | 6/6 | passed=1、bench 比 0.216 | M3 第2弾: 読みの関数を run の外へ（状態は run ごとに初期化）、--single-threaded-gc。前版比 0.897。fuzz 1310 件一致 |
 | 2026-11-22 11:15 JST | 0.1.0 | 6/6 | passed=1、bench 比 0.248 | M3: opt-a の solve.js（indexOf＋小関数）と Buffer 読み込みを統合。fuzz 1310 件一致 |
 | 2026-11-22 10:35 JST | 0.1.0 | 6/6 | passed=1 6/6 | M2 完了: solve.js 新規実装 |
