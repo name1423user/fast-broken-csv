@@ -2,7 +2,18 @@
 
 最終更新: 2026-11-22（M4-T02 完了時点、コミット 42d173b の次）。新しいチャットでは、まず CLAUDE.md・SPEC.md・PLAN.md とこのファイルを読む。
 
-## いまの状態
+## 2026-11-22 午後の追記（M5: バイト列変換器。上の「いまの状態」より新しい）
+
+- 方針（ユーザー決定）: main.ts は1行の import、本体は transducer.js（cases.json をバイトのまま走査して答えの JSON を直接書く）。solve.js は正しさのアンカーとフォールバック。純 JS のみ。
+- 最新の push: 54ca6d9（準備走行 3 周）。その前: 88131f3（ループ展開を切る）、92237f4（header 後決め・SWAR）、09b22f7（変換器化）。
+- 外部の独立計測（ユーザー）: 練習 6/6、別シード 5 セット 30 ケース完全一致。net は旧 0.358 秒 → 0.043 秒 → ほぼ 0（gross 0.313 → 0.270 秒）。
+- 手元 Docker（scratch の multibench、15 回の中央値、空実行を引いた net）: 現行 64.4ms / 理想ループの床（全バイトを SWAR で1回なめるだけ）42.1ms / 入出力の床（読み＋UTF-8 検証＋12MB 書き）17.7ms / 読みだけ 4.8ms。
+- 効いたもの: 型除去を避ける（main.ts を1行に）、準備走行（型情報不足の最適化解除 18 回→0）、`--no-concurrent-recompilation`、`--no-turbo-loop-peeling`、header 後決め（indexOf をやめる）、SWAR、準備走行 8→3 周。
+- 効かなかったもの: V8 の段階フラグ（invocation-count 系・no-maglev・Maglev のみ）、他の turbo-* フラグ、カンマを SWAR ループ内で処理（遅くなった）、readPlain の SWAR 化（差なし）、準備走行を長くする。
+- 検証: `bash scripts/heavy.sh bash scripts/check.sh`（規約 → fuzz 420 件 → fuzz-main 32 回 → grade-local）。重い処理は必ず scripts/heavy.sh を通して直列に。
+- 残りの判断: 提出（bundle・submit）はユーザーの指示待ち。20 時（JST）まで詰める指示。審査上の注意: ルール文面は main.ts が run で解く形を想定しており、変換器は通常 run を呼ばない（ユーザー決定で進めた）。
+
+## いまの状態（M4 時点）
 
 - バウンティ: make.fun「Read broken CSV files faster, 21 November 2026」（`csv-reader-speed-01-run-20261121`）。締切 **2026-11-23 02:42 UTC（11:42 JST）**。
 - リポジトリ: https://github.com/name1423user/fast-broken-csv （公開、`main`）。版は `package.json` の 0.1.0。
