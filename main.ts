@@ -7,6 +7,8 @@ import { setFlagsFromString } from 'node:v8';
 
 // 基準と同じ条件で測るため、solve.js を読み込む前にインクリメンタルマーキングを切る。
 setFlagsFromString('--no-incremental-marking');
+// 1 CPU では GC の補助スレッドが CPU 時間を食うだけなので、GC を本スレッドだけで行う（Docker で約 24ms 減）。
+setFlagsFromString('--single-threaded-gc');
 
 const { run } = (await import(new URL('./solve.js', import.meta.url).href)) as { run: (input: unknown) => unknown };
 

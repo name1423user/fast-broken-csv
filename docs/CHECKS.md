@@ -14,7 +14,7 @@
 | AC-002 | 一致 | 生成器の 300 ケース（seed 50×6）で基準と一致 | `scripts/fuzz.mjs` が不一致 0 件 | 必須 | PASS | parser-engineer | SPEC:51；生成 300 件 不一致 0（.check/20261122-103500/test.log） |
 | AC-003 | 一致 | 手作りの境界ケースで基準と一致 | `scripts/fuzz.mjs` の固定ケースで不一致 0 件（NOTES の E1〜E35 を含めるとよい） | 必須 | PASS | parser-engineer | SPEC:52；固定 106 件（53 文字列×header true/false）不一致 0（.check/20261122-103500/test.log）。E1〜E35 の全部は入っていない（E35 など） |
 | AC-004 | 再現性 | 同じ入力で2回実行し `answers.json` がバイト一致 | `grade-local` の二重実行が通る | 必須 | PASS | determinism-auditor（確認） | SPEC:53；`L1 regrade reproduced byte for byte`（.check/20261122-103500/test.log） |
-| AC-005 | 速度 | 練習セットの CPU 時間が基準の 0.5 倍以下（Node 22） | `scripts/bench.mjs` の中央値の比 ≤ 0.5 | 目標 | PASS | perf-engineer | bench 比 0.248（Docker・Node 22、--runs 10、2026-11-22 M3）
+| AC-005 | 速度 | 練習セットの CPU 時間が基準の 0.5 倍以下（Node 22） | `scripts/bench.mjs` の中央値の比 ≤ 0.5 | 目標 | PASS | perf-engineer | bench 比 0.216（Docker・Node 22、--runs 10、2026-11-22 M3 第2弾）
 | AC-006 | 資源 | 1回の実行が 10 秒・1024MB 以内（docker、1 CPU） | `grade-local` が時間切れ・メモリ超過なく終わる | 必須 | PASS | perf-engineer | SPEC:55；grade-local `status finished`、時間切れ・メモリ超過の表示なし（.check/20261122-103500/test.log） |
 | AC-007 | 提出 | リポジトリ 1MiB 以下、MIT、テンプレどおりの README、About 設定 | `du`、`gh repo view` で確認 | 体裁 | TODO | リード（release-auditor が確認） | SPEC:56；M4 の範囲。規約チェックは OK（32 ファイル / 0.07 MiB、.check/20261122-103500/compliance.log）だが公開・README・About は未確認 |
 
