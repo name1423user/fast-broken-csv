@@ -35,7 +35,11 @@ const FIXED = [
   'a,b\n1,"', '"a""b",c\n', '"a\nb",c\n"d\r\ne",f\n"g\rh",i\n', '"a"x,b\n', '"a"x"y,b\n', '"a" ,b\n', 'a"b,c\n',
   'a,b\n"open,c\nd,e\n', 'a,b\nc,"open', 'a,b\nc,d\n"x', '﻿a,b\n1,2', 'a,b\n\n1,2\n\r\n3,4', 'h1,h2\n', 'h1,h2',
   'a,b\n1,2\rx,3\n', 'x,"y\r', ' a , b \n', '東京,"數據"\nΔέλτα,Москва\n',
-].flatMap((text) => [true, false].map((header) => ({ text, header })));
+  // CR と引用符が隣り合う形（M2-T02 の報告から）
+  '"a"\r', '"a"\r\r\n', '\r"a"', '"\r', ',"\r', '"\r\n"', '"a"\n\r\n\r', '"abc""', 'a,"b,""\n', '\r\r\na,b\n', '"a"x\ry,b\n',
+].flatMap((text) => [true, false].map((header) => ({ text, header })))
+  // header はちょうど true のときだけヘッダーあり（BASELINE_NOTES B-01）
+  .concat([{ text: 'a\nb', header: 1 }, { text: 'a\nb', header: 'true' }]);
 
 let total = 0;
 let mismatches = 0;
