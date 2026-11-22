@@ -1,9 +1,9 @@
 {
-  "_説明": "scripts/compliance.py の設定。null は上限なし。forbidden の level は error か warn、in は source（source_globs のファイル）か all。行末に allow-compliance と書いた行は除外される。README.md は M4-T01 で作るので、そのとき required_files に足す。",
+  "_説明": "scripts/compliance.py の設定。null は上限なし。forbidden の level は error か warn、in は source（source_globs のファイル）か all。行末に allow-compliance と書いた行は除外される。",
   "exclude_dirs": [".git", "node_modules", ".check", "kit-dl"],
   "max_total_mib": 1,
   "max_file_mib": null,
-  "required_files": ["LICENSE*", "package.json", "main.ts", "solve.js"],
+  "required_files": ["LICENSE*", "README.md", "package.json", "main.ts", "solve.js"],
   "source_globs": ["main.ts", "solve.js"],
   "forbidden": [
     { "pattern": "WebAssembly|\\.wasm\\b|\\.node['\"]|process\\.dlopen", "message": "WebAssembly・ネイティブは禁止（competition.yaml）", "level": "error", "in": "source" },
