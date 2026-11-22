@@ -19,6 +19,9 @@ setFlagsFromString('--no-incremental-marking');
 setFlagsFromString('--no-concurrent-recompilation');
 // TurboFan のループ展開（peeling）を切る。コンパイルが軽くなり、Docker の bench で net 約 79ms → 約 67ms（他の turbo-* は誤差）。
 setFlagsFromString('--no-turbo-loop-peeling');
+// TurboFan のインライン化を切る。コンパイル時間が約 25ms → 約 21ms に減り、Buffer#copy の置き換えと合わせて
+// runsc の net 約 251ms → 約 235ms、runc 約 149ms → 約 128ms（合成入力、41 回・31 回の上下除去平均）。gVisor はコンパイルが高い。
+setFlagsFromString('--no-turbo-inlining');
 
 const inputDir = process.env.MAKEFUN_INPUT_DIR ?? '/input';
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -83,6 +86,10 @@ let r0e = -1;
 let nErrFirst = 0; // 先頭レコードの終わりまでに出たエラーの数（header が true なら row は null）
 let rowPos = new Int32Array(1024); // 各エラーの row の値の err での位置
 
+// Buffer#copy は Node の JS 関数で、TurboFan のコンパイル対象が 3 つ増える（gVisor ではコンパイルが高い）。小さなループで写す。
+function cpy(d, at, s, a, b) {
+  while (a < b) d[at++] = s[a++];
+}
 function growOut(need) {
   if (out.length - o >= need) return;
   const b = Buffer.allocUnsafe(Math.max(out.length * 2, o + need));
@@ -357,7 +364,7 @@ function readRecord() {
     errStart(E_LONG, o - xs);
     err.set(S_EXTRA, e);
     e += S_EXTRA.length;
-    out.copy(err, e, xs, o);
+    cpy(err, e, out, xs, o);
     e += o - xs;
     err[e++] = RB;
     err[e++] = RC;
@@ -410,13 +417,13 @@ function finishCase(hdr) {
   out.set(S_ERRORS, o);
   o += S_ERRORS.length;
   if (!hdr) {
-    err.copy(out, o, 0, e);
+    cpy(out, o, err, 0, e);
     o += e;
   } else {
     let from = 0;
     for (let i = 0; i < nErr; i++) {
       const at = rowPos[i];
-      err.copy(out, o, from, at);
+      cpy(out, o, err, from, at);
       o += at - from;
       let t = at;
       let v = 0;
@@ -424,7 +431,7 @@ function finishCase(hdr) {
       if (i < nErrFirst) { out.set(S_NULL, o); o += 4; } else o = putInt(out, o, v - 1);
       from = t;
     }
-    err.copy(out, o, from, e);
+    cpy(out, o, err, from, e);
     o += e - from;
   }
   out[o++] = RB;
